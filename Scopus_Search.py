@@ -13,7 +13,17 @@ st.title("Scopus Researcher Expertise Tracker")
 st.write("An application to map overall expertise areas and specific research topics of authors using Scopus Author IDs.")
 
 # 2. Initialize Scopus API Key
-pybliometrics.scopus.init(keys=['ede6474ccb592558f068c82c9145cd65'])
+import os
+os.environ['PYB_CONFIG_FILE'] = '/tmp/config.ini'
+
+# Mengambil API key dan InstToken dari Secrets Streamlit Cloud
+api_key = st.secrets.get("SCOPUS_API_KEY", "ede6474ccb592558f068c82c9145cd65")
+inst_token = st.secrets.get("SCOPUS_INST_TOKEN", None)
+
+if inst_token:
+    pybliometrics.scopus.init(keys=[api_key], insttoken=inst_token, create_config=True)
+else:
+    pybliometrics.scopus.init(keys=[api_key], create_config=True)
 
 # Helper function to extract data for a single author
 def get_author_data(author_id):
