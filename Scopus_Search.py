@@ -14,32 +14,71 @@ st.title("Scopus Researcher Expertise Tracker")
 st.write("An application to map overall expertise areas and specific research topics of authors using Scopus Author IDs.")
 
 # 2. Initialize Scopus API Key
-os.environ['PYB_CONFIG_FILE'] = '/tmp/config.ini'
-pybliometrics.scopus.init(keys=['ede6474ccb592558f068c82c9145cd65'], create_config=True)
-
-# Helper function to extract structured data for a single author
+try:
+    pybliometrics.scopus.init(keys=['ede6474ccb592558f068c82c9145cd65'])
+except Exception:
+    # Mengatasi inisialisasi ulang jika konfigurasi sudah ada
+    pass
+    # Helper function to extract structured data for a single author
 def get_author_data(author_id):
     au = AuthorRetrieval(author_id, view="STANDARD")
     full_name = f"{au.given_name or ''} {au.surname or ''}".strip()
     affiliation = au.affiliation_current[0].preferred_name if (hasattr(au, 'affiliation_current') and au.affiliation_current) else "Unknown"
     total_docs = getattr(au, 'document_count', getattr(au, 'doc_count', 0))
-    h_index = getattr(au, 'hindex', getattr(au, 'h_index', 0))
     
+    # --- FIX H-INDEX ---
+    h_index = None
+    # 1. Coba ambil dari atribut biasa
+    for attr in ['hindex', 'h_index', 'h_index_count']:
+        val = getattr(au, attr, None)
+        if val is not None and not callable(val):
+            h_index = val
+            break
+            
+    # 2. Jika berbentuk method/fungsi, panggil fungsinya
+    if h_index is None:
+        if hasattr(au, 'hindex') and callable(au.hindex):
+            try:
+                h_index = au.hindex()
+            except Exception:
+                pass
+
+    # 3. Fallback jika tetap None: Hitung h-index manual dari dokumen
+    docs = au.get_documents()
+    if h_index is None and docs:
+        citations = []
+        for d in docs:
+            cite_count = getattr(d, 'citedby_count', 0) or 0
+            citations.append(int(cite_count))
+        citations.sort(reverse=True)
+        
+        # Hitung h-index: H dokumen yang masing-masing punya minimal H sitasi
+        h_calc = 0
+        for i, c in enumerate(citations):
+            if c >= i + 1:
+                h_calc = i + 1
+            else:
+                break
+        h_index = h_calc
+
+    # Standardisasi jika masih None
+    if h_index is None:
+        h_index = 0
+    # -------------------
+
     # 1. Extract Subject Areas
     areas = getattr(au, 'subject_areas', None) or getattr(au, 'classification', None)
     subject_data = []
     subject_summary = []
     if areas:
-        for area in areas[:5]:  # Top 5 subject areas
+        for idx, area in enumerate(areas[:5], start=1):
             area_name = getattr(area, 'area', area[2] if isinstance(area, (list, tuple)) else 'N/A')
-            doc_count = getattr(area, 'count', area[3] if isinstance(area, (list, tuple)) and len(area) > 3 else "N/A")
-            subject_data.append({"Subject Area": area_name, "Document Count": doc_count})
-            subject_summary.append(f"{area_name} ({doc_count})")
+            subject_data.append({"Subject Area": area_name, "Rank Priority": f"Top #{idx}"})
+            subject_summary.append(area_name)
     
     str_subject = ", ".join(subject_summary[:3]) if subject_summary else "Not Found"
 
     # 2. Extract Top Research Keywords
-    docs = au.get_documents()
     keyword_data = []
     keyword_summary = []
     if docs:
@@ -63,7 +102,7 @@ def get_author_data(author_id):
         'Full Name': full_name,
         'Affiliation': affiliation,
         'Total Documents': total_docs,
-        'h-Index': h_index,
+        'h-Index': int(h_index),
         'Subject_Data': pd.DataFrame(subject_data),
         'Keyword_Data': pd.DataFrame(keyword_data),
         'Main Subject Areas Summary': str_subject,
