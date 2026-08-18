@@ -5,6 +5,7 @@ import pybliometrics
 from pybliometrics.scopus import AuthorRetrieval
 import time
 import io
+import os
 
 # 1. Page Configuration
 st.set_page_config(page_title="Scopus Expertise Tracker", layout="wide")
@@ -13,56 +14,60 @@ st.title("Scopus Researcher Expertise Tracker")
 st.write("An application to map overall expertise areas and specific research topics of authors using Scopus Author IDs.")
 
 # 2. Initialize Scopus API Key
-import os
 os.environ['PYB_CONFIG_FILE'] = '/tmp/config.ini'
+pybliometrics.scopus.init(keys=['ede6474ccb592558f068c82c9145cd65'], create_config=True)
 
-# Mengambil API key dan InstToken dari Secrets Streamlit Cloud
-api_key = st.secrets.get("SCOPUS_API_KEY", "ede6474ccb592558f068c82c9145cd65")
-inst_token = st.secrets.get("SCOPUS_INST_TOKEN", None)
-
-if inst_token:
-    pybliometrics.scopus.init(keys=[api_key], insttoken=inst_token, create_config=True)
-else:
-    pybliometrics.scopus.init(keys=[api_key], create_config=True)
-
-# Helper function to extract data for a single author
+# Helper function to extract structured data for a single author
 def get_author_data(author_id):
-    au = AuthorRetrieval(author_id)
+    au = AuthorRetrieval(author_id, view="STANDARD")
     full_name = f"{au.given_name or ''} {au.surname or ''}".strip()
-    affiliation = au.affiliation_current[0].preferred_name if au.affiliation_current else "Unknown"
+    affiliation = au.affiliation_current[0].preferred_name if (hasattr(au, 'affiliation_current') and au.affiliation_current) else "Unknown"
     total_docs = getattr(au, 'document_count', getattr(au, 'doc_count', 0))
     h_index = getattr(au, 'hindex', getattr(au, 'h_index', 0))
     
-    # Subject Areas (Top 3)
+    # 1. Extract Subject Areas
     areas = getattr(au, 'subject_areas', None) or getattr(au, 'classification', None)
-    subject_list = []
+    subject_data = []
+    subject_summary = []
     if areas:
-        for area in areas:
+        for area in areas[:5]:  # Top 5 subject areas
             area_name = getattr(area, 'area', area[2] if isinstance(area, (list, tuple)) else 'N/A')
-            subject_list.append(area_name)
-    str_subject = ", ".join(subject_list[:3]) if subject_list else "Not Found"
+            doc_count = getattr(area, 'count', area[3] if isinstance(area, (list, tuple)) and len(area) > 3 else "N/A")
+            subject_data.append({"Subject Area": area_name, "Document Count": doc_count})
+            subject_summary.append(f"{area_name} ({doc_count})")
     
-    # Top Keywords (Top 5)
+    str_subject = ", ".join(subject_summary[:3]) if subject_summary else "Not Found"
+
+    # 2. Extract Top Research Keywords
     docs = au.get_documents()
-    list_keywords = []
+    keyword_data = []
+    keyword_summary = []
     if docs:
+        list_keywords = []
         for doc in docs:
             if hasattr(doc, 'authkeywords') and doc.authkeywords:
                 keywords = [k.strip().title() for k in doc.authkeywords.split('|')]
                 list_keywords.extend(keywords)
-        top_keywords = [item[0] for item in Counter(list_keywords).most_common(5)]
-        str_keywords = ", ".join(top_keywords) if top_keywords else "No Keywords Found"
+                
+        top_keywords = Counter(list_keywords).most_common(5)
+        for kw, count in top_keywords:
+            keyword_data.append({"Research Keyword / Topic": kw, "Frequency": count})
+            keyword_summary.append(f"{kw} ({count})")
+            
+        str_keywords = ", ".join(keyword_summary) if keyword_summary else "No Keywords Found"
     else:
         str_keywords = "No Documents Found"
-        
+
     return {
         'Author_ID': author_id,
         'Full Name': full_name,
         'Affiliation': affiliation,
         'Total Documents': total_docs,
         'h-Index': h_index,
-        'Main Subject Areas': str_subject,
-        'Dominant Research Topics': str_keywords,
+        'Subject_Data': pd.DataFrame(subject_data),
+        'Keyword_Data': pd.DataFrame(keyword_data),
+        'Main Subject Areas Summary': str_subject,
+        'Dominant Research Topics Summary': str_keywords,
         'Status': 'Success'
     }
 
@@ -86,6 +91,7 @@ with tab1:
                     data = get_author_data(author_id)
                     st.success("Data Retrieved Successfully.")
                     
+                    # Basic Profile Info
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write(f"**Full Name:** {data['Full Name']}")
@@ -95,9 +101,24 @@ with tab1:
                         st.write(f"**h-Index:** {data['h-Index']}")
                     
                     st.divider()
-                    st.write(f"**Main Subject Areas:** {data['Main Subject Areas']}")
-                    st.write(f"**Dominant Research Topics:** {data['Dominant Research Topics']}")
                     
+                    # Displaying Tables Side by Side
+                    tbl_col1, tbl_col2 = st.columns(2)
+                    
+                    with tbl_col1:
+                        st.markdown("### Main Subject Areas")
+                        if not data['Subject_Data'].empty:
+                            st.dataframe(data['Subject_Data'], use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No subject areas available.")
+
+                    with tbl_col2:
+                        st.markdown("### Dominant Research Topics")
+                        if not data['Keyword_Data'].empty:
+                            st.dataframe(data['Keyword_Data'], use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No research topics available.")
+
                 except pybliometrics.exception.Scopus404Error:
                     st.error(f"Scopus Author ID '{author_id}' was not found.")
                 except Exception as e:
@@ -136,7 +157,16 @@ with tab2:
                         
                         try:
                             res = get_author_data(aid)
-                            hasil_pencarian.append(res)
+                            hasil_pencarian.append({
+                                'Author_ID': aid,
+                                'Full Name': res['Full Name'],
+                                'Affiliation': res['Affiliation'],
+                                'Total Documents': res['Total Documents'],
+                                'h-Index': res['h-Index'],
+                                'Main Subject Areas': res['Main Subject Areas Summary'],
+                                'Dominant Research Topics': res['Dominant Research Topics Summary'],
+                                'Status': 'Success'
+                            })
                         except Exception as e:
                             hasil_pencarian.append({
                                 'Author_ID': aid,
