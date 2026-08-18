@@ -15,27 +15,26 @@ st.write("An application to map overall expertise areas and specific research to
 
 # 2. Initialize Scopus API Key
 try:
+    os.environ['PYB_CONFIG_FILE'] = '/tmp/config.ini'
     pybliometrics.scopus.init(keys=['ede6474ccb592558f068c82c9145cd65'])
 except Exception:
-    # Mengatasi inisialisasi ulang jika konfigurasi sudah ada
     pass
-    # Helper function to extract structured data for a single author
+
+# Helper function to extract structured data for a single author (STANDARD view)
 def get_author_data(author_id):
     au = AuthorRetrieval(author_id, view="STANDARD")
     full_name = f"{au.given_name or ''} {au.surname or ''}".strip()
     affiliation = au.affiliation_current[0].preferred_name if (hasattr(au, 'affiliation_current') and au.affiliation_current) else "Unknown"
     total_docs = getattr(au, 'document_count', getattr(au, 'doc_count', 0))
     
-    # --- FIX H-INDEX ---
+    # Fix H-Index extraction for STANDARD view
     h_index = None
-    # 1. Coba ambil dari atribut biasa
     for attr in ['hindex', 'h_index', 'h_index_count']:
         val = getattr(au, attr, None)
         if val is not None and not callable(val):
             h_index = val
             break
             
-    # 2. Jika berbentuk method/fungsi, panggil fungsinya
     if h_index is None:
         if hasattr(au, 'hindex') and callable(au.hindex):
             try:
@@ -43,7 +42,6 @@ def get_author_data(author_id):
             except Exception:
                 pass
 
-    # 3. Fallback jika tetap None: Hitung h-index manual dari dokumen
     docs = au.get_documents()
     if h_index is None and docs:
         citations = []
@@ -52,7 +50,6 @@ def get_author_data(author_id):
             citations.append(int(cite_count))
         citations.sort(reverse=True)
         
-        # Hitung h-index: H dokumen yang masing-masing punya minimal H sitasi
         h_calc = 0
         for i, c in enumerate(citations):
             if c >= i + 1:
@@ -61,10 +58,8 @@ def get_author_data(author_id):
                 break
         h_index = h_calc
 
-    # Standardisasi jika masih None
     if h_index is None:
         h_index = 0
-    # -------------------
 
     # 1. Extract Subject Areas
     areas = getattr(au, 'subject_areas', None) or getattr(au, 'classification', None)
